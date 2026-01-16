@@ -1,15 +1,30 @@
 ecommerce-analytics-dashboard/
 │
 ├── backend/
-│ ├── server.js
-│ ├── routes/
-│ ├── utils/
-│ └── uploads/
+│   ├── server.js
+│   ├── routes/
+│   │   └── analytics.js
+│   ├── utils/
+│   │   ├── csvProcessor.js
+│   │   └── linearRegression.js
+│   ├── uploads/
+│   ├── package.json
 │
 ├── frontend/
-│ ├── src/
-│ ├── components/
-│ ├── pages/
-│ └── services/
+│   ├── src/
+│   │   ├── components/
+│   │   │   ├── KPI.jsx
+│   │   │   ├── Charts.jsx
+│   │   │   └── Upload.jsx
+│   │   ├── pages/
+│   │   │   └── Dashboard.jsx
+│   │   ├── services/
+│   │   │   └── api.js
+│   │   ├── App.jsx
+│   │   ├── main.jsx
+│   │   └── index.css
+│   ├── tailwind.config.js
+│   ├── package.json
 │
 └── README.md
+

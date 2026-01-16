@@ -1,0 +1,91 @@
+BACKEND (Node + Express)
+backend/package.json
+{
+  "name": "ecommerce-backend",
+  "version": "1.0.0",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "csv-parser": "^3.0.0",
+    "express": "^4.18.2",
+    "multer": "^1.4.5"
+  }
+}
+
+backend/server.js
+const express = require("express");
+const cors = require("cors");
+
+const analyticsRoutes = require("./routes/analytics");
+
+const app = express();
+app.use(cors());
+app.use(express.json());
+
+app.use("/api/analytics", analyticsRoutes);
+
+app.listen(5000, () => {
+  console.log("Backend running on http://localhost:5000");
+});
+
+backend/routes/analytics.js
+const express = require("express");
+const multer = require("multer");
+const processCSV = require("../utils/csvProcessor");
+const predictProduct = require("../utils/linearRegression");
+
+const router = express.Router();
+const upload = multer({ dest: "uploads/" });
+
+router.post("/upload", upload.single("file"), async (req, res) => {
+  const data = await processCSV(req.file.path);
+
+  const recommendation = predictProduct(data.productSales);
+
+  res.json({
+    kpis: data.kpis,
+    charts: data.charts,
+    recommendation
+  });
+});
+
+module.exports = router;
+
+backend/utils/csvProcessor.js
+const fs = require("fs");
+const csv = require("csv-parser");
+
+module.exports = (filePath) => {
+  return new Promise((resolve) => {
+    let totalRevenue = 0;
+    let totalProfit = 0;
+    let productSales = {};
+
+    fs.createReadStream(filePath)
+      .pipe(csv())
+      .on("data", (row) => {
+        const revenue = row.price * row.quantity;
+        const profit = (row.price - row.cost) * row.quantity;
+
+        totalRevenue += revenue;
+        totalProfit += profit;
+
+        productSales[row.product] =
+          (productSales[row.product] || 0) + row.quantity;
+      })
+      .on("end", () => {
+        resolve({
+          kpis: {
+            revenue: totalRevenue,
+            profit: totalProfit
+          },
+          charts: productSales,
+          productSales
+        });
+      });
+  });
+};
+

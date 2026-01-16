@@ -1,0 +1,102 @@
+FRONTEND  (React + Tailwind)
+frontend/package.json
+{
+  "name": "ecommerce-dashboard",
+  "private": true,
+  "dependencies": {
+    "axios": "^1.6.0",
+    "chart.js": "^4.4.0",
+    "react": "^18.2.0",
+    "react-chartjs-2": "^5.2.0"
+  }
+}
+
+frontend/src/services/api.js
+import axios from "axios";
+
+export const uploadCSV = (file) => {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  return axios.post("http://localhost:5000/api/analytics/upload", formData);
+};
+
+frontend/src/components/Upload.jsx
+import { uploadCSV } from "../services/api";
+
+export default function Upload({ setData }) {
+  const handleUpload = async (e) => {
+    const file = e.target.files[0];
+    const res = await uploadCSV(file);
+    setData(res.data);
+  };
+
+  return (
+    <input
+      type="file"
+      accept=".csv"
+      onChange={handleUpload}
+      className="text-white"
+    />
+  );
+}
+
+frontend/src/components/KPI.jsx
+export default function KPI({ title, value }) {
+  return (
+    <div className="bg-gray-800 p-4 rounded-xl">
+      <h3 className="text-gray-400">{title}</h3>
+      <p className="text-2xl font-bold text-white">${value}</p>
+    </div>
+  );
+}
+
+frontend/src/components/Charts.jsx
+import { Bar } from "react-chartjs-2";
+
+export default function Charts({ charts }) {
+  return (
+    <Bar
+      data={{
+        labels: Object.keys(charts),
+        datasets: [
+          {
+            label: "Sales",
+            data: Object.values(charts)
+          }
+        ]
+      }}
+    />
+  );
+}
+
+frontend/src/pages/Dashboard.jsx
+import { useState } from "react";
+import Upload from "../components/Upload";
+import KPI from "../components/KPI";
+import Charts from "../components/Charts";
+
+export default function Dashboard() {
+  const [data, setData] = useState(null);
+
+  return (
+    <div className="bg-black min-h-screen p-8">
+      <Upload setData={setData} />
+
+      {data && (
+        <>
+          <div className="grid grid-cols-2 gap-4 mt-6">
+            <KPI title="Revenue" value={data.kpis.revenue} />
+            <KPI title="Profit" value={data.kpis.profit} />
+          </div>
+
+          <Charts charts={data.charts} />
+
+          <p className="text-green-400 mt-4">
+            AI Insight: {data.recommendation}
+          </p>
+        </>
+      )}
+    </div>
+  );
+}

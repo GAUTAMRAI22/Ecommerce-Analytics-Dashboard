@@ -1,0 +1,15 @@
+ecommerce-analytics-dashboard/
+│
+├── backend/
+│ ├── server.js
+│ ├── routes/
+│ ├── utils/
+│ └── uploads/
+│
+├── frontend/
+│ ├── src/
+│ ├── components/
+│ ├── pages/
+│ └── services/
+│
+└── README.md

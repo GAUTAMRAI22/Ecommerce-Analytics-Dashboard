@@ -1,6 +1,6 @@
 E-Commerce Analytics Dashboard
 A full-stack analytics dashboard that helps e-commerce sellers track sales performance, profits, customer trends, and product insights using CSV uploads or APIs.
-Built as a real-world freelance-ready project** for analytics, dashboards, and data-driven decision making.
+Built as a real-world freelance-ready project for analytics, dashboards, and data-driven decision making.
 
    Features
    Upload Sales CSV

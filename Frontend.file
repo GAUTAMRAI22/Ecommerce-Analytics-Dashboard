@@ -21,82 +21,986 @@ export const uploadCSV = (file) => {
   return axios.post("http://localhost:5000/api/analytics/upload", formData);
 };
 
-frontend/src/components/Upload.jsx
-import { uploadCSV } from "../services/api";
+frontend/src/components/KPI.jsx
+import React from 'react';
 
-export default function Upload({ setData }) {
-  const handleUpload = async (e) => {
-    const file = e.target.files[0];
-    const res = await uploadCSV(file);
-    setData(res.data);
+const KPI = ({ title, value, icon: Icon, subtitle, trend, color = 'blue' }) => {
+  const colorClasses = {
+    blue: 'from-blue-600 to-blue-700 border-blue-500',
+    purple: 'from-purple-600 to-purple-700 border-purple-500',
+    pink: 'from-pink-600 to-pink-700 border-pink-500',
+    orange: 'from-orange-600 to-orange-700 border-orange-500',
+    green: 'from-green-600 to-green-700 border-green-500',
+    red: 'from-red-600 to-red-700 border-red-500'
+  };
+
+  const iconColorClasses = {
+    blue: 'text-blue-200',
+    purple: 'text-purple-200',
+    pink: 'text-pink-200',
+    orange: 'text-orange-200',
+    green: 'text-green-200',
+    red: 'text-red-200'
   };
 
   return (
-    <input
-      type="file"
-      accept=".csv"
-      onChange={handleUpload}
-      className="text-white"
-    />
-  );
-}
-
-frontend/src/components/KPI.jsx
-export default function KPI({ title, value }) {
-  return (
-    <div className="bg-gray-800 p-4 rounded-xl">
-      <h3 className="text-gray-400">{title}</h3>
-      <p className="text-2xl font-bold text-white">${value}</p>
-    </div>
-  );
-}
-
-frontend/src/components/Charts.jsx
-import { Bar } from "react-chartjs-2";
-
-export default function Charts({ charts }) {
-  return (
-    <Bar
-      data={{
-        labels: Object.keys(charts),
-        datasets: [
-          {
-            label: "Sales",
-            data: Object.values(charts)
-          }
-        ]
-      }}
-    />
-  );
-}
-
-frontend/src/pages/Dashboard.jsx
-import { useState } from "react";
-import Upload from "../components/Upload";
-import KPI from "../components/KPI";
-import Charts from "../components/Charts";
-
-export default function Dashboard() {
-  const [data, setData] = useState(null);
-
-  return (
-    <div className="bg-black min-h-screen p-8">
-      <Upload setData={setData} />
-
-      {data && (
-        <>
-          <div className="grid grid-cols-2 gap-4 mt-6">
-            <KPI title="Revenue" value={data.kpis.revenue} />
-            <KPI title="Profit" value={data.kpis.profit} />
-          </div>
-
-          <Charts charts={data.charts} />
-
-          <p className="text-green-400 mt-4">
-            AI Insight: {data.recommendation}
-          </p>
-        </>
+    <div className={`bg-gradient-to-br ${colorClasses[color]} rounded-lg p-6 border transition-transform hover:scale-105`}>
+      <div className="flex items-center justify-between mb-2">
+        {Icon && <Icon className={iconColorClasses[color]} size={24} />}
+        {subtitle && (
+          <span className={`text-xs ${iconColorClasses[color]}`}>{subtitle}</span>
+        )}
+      </div>
+      <h3 className="text-3xl font-bold mb-1">{value}</h3>
+      <p className={`text-sm ${iconColorClasses[color]}`}>{title}</p>
+      {trend && (
+        <div className="mt-2 text-xs">
+          <span className={trend.isPositive ? 'text-green-300' : 'text-red-300'}>
+            {trend.isPositive ? '↑' : '↓'} {trend.value}
+          </span>
+        </div>
       )}
     </div>
   );
+};
+
+export default KPI;
+
+frontend/src/components/Charts.jsx
+import React from 'react';
+import {
+  LineChart,
+  Line,
+  BarChart,
+  Bar,
+  PieChart,
+  Pie,
+  Cell,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ResponsiveContainer
+} from 'recharts';
+
+const COLORS = ['#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981', '#ef4444', '#06b6d4'];
+
+export const RevenueChart = ({ data }) => {
+  return (
+    <ResponsiveContainer width="100%" height={300}>
+      <LineChart data={data}>
+        <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+        <XAxis dataKey="month" stroke="#9ca3af" />
+        <YAxis stroke="#9ca3af" />
+        <Tooltip
+          contentStyle={{
+            backgroundColor: '#1f2937',
+            border: '1px solid #374151',
+            borderRadius: '8px'
+          }}
+          labelStyle={{ color: '#f3f4f6' }}
+        />
+        <Legend />
+        <Line
+          type="monotone"
+          dataKey="revenue"
+          stroke="#3b82f6"
+          strokeWidth={3}
+          name="Revenue ($)"
+          dot={{ fill: '#3b82f6', r: 4 }}
+          activeDot={{ r: 6 }}
+        />
+      </LineChart>
+    </ResponsiveContainer>
+  );
+};
+
+export const OrdersCustomersChart = ({ data }) => {
+  return (
+    <ResponsiveContainer width="100%" height={300}>
+      <BarChart data={data}>
+        <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+        <XAxis dataKey="month" stroke="#9ca3af" />
+        <YAxis stroke="#9ca3af" />
+        <Tooltip
+          contentStyle={{
+            backgroundColor: '#1f2937',
+            border: '1px solid #374151',
+            borderRadius: '8px'
+          }}
+          labelStyle={{ color: '#f3f4f6' }}
+        />
+        <Legend />
+        <Bar dataKey="orders" fill="#8b5cf6" name="Orders" />
+        <Bar dataKey="customers" fill="#ec4899" name="Customers" />
+      </BarChart>
+    </ResponsiveContainer>
+  );
+};
+
+export const TopProductsChart = ({ data }) => {
+  return (
+    <ResponsiveContainer width="100%" height={300}>
+      <PieChart>
+        <Pie
+          data={data}
+          dataKey="revenue"
+          nameKey="name"
+          cx="50%"
+          cy="50%"
+          outerRadius={100}
+          label={(entry) => `${entry.name}: $${entry.revenue.toFixed(0)}`}
+        >
+          {data.map((entry, index) => (
+            <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+          ))}
+        </Pie>
+        <Tooltip
+          contentStyle={{
+            backgroundColor: '#1f2937',
+            border: '1px solid #374151',
+            borderRadius: '8px'
+          }}
+          formatter={(value) => `$${parseFloat(value).toFixed(2)}`}
+        />
+      </PieChart>
+    </ResponsiveContainer>
+  );
+};
+
+export const ConversionRateChart = ({ data }) => {
+  return (
+    <ResponsiveContainer width="100%" height={300}>
+      <LineChart data={data}>
+        <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+        <XAxis dataKey="month" stroke="#9ca3af" />
+        <YAxis stroke="#9ca3af" />
+        <Tooltip
+          contentStyle={{
+            backgroundColor: '#1f2937',
+            border: '1px solid #374151',
+            borderRadius: '8px'
+          }}
+          labelStyle={{ color: '#f3f4f6' }}
+          formatter={(value) => `${value}%`}
+        />
+        <Legend />
+        <Line
+          type="monotone"
+          dataKey="conversionRate"
+          stroke="#10b981"
+          strokeWidth={3}
+          name="Conversion Rate (%)"
+          dot={{ fill: '#10b981', r: 4 }}
+        />
+      </LineChart>
+    </ResponsiveContainer>
+  );
+};
+
+export const CustomerGrowthChart = ({ data }) => {
+  return (
+    <ResponsiveContainer width="100%" height={300}>
+      <LineChart data={data}>
+        <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+        <XAxis dataKey="month" stroke="#9ca3af" />
+        <YAxis stroke="#9ca3af" />
+        <Tooltip
+          contentStyle={{
+            backgroundColor: '#1f2937',
+            border: '1px solid #374151',
+            borderRadius: '8px'
+          }}
+          labelStyle={{ color: '#f3f4f6' }}
+        />
+        <Legend />
+        <Line
+          type="monotone"
+          dataKey="totalCustomers"
+          stroke="#ec4899"
+          strokeWidth={3}
+          name="Total Customers"
+          dot={{ fill: '#ec4899', r: 4 }}
+        />
+        <Line
+          type="monotone"
+          dataKey="newCustomers"
+          stroke="#8b5cf6"
+          strokeWidth={2}
+          name="New Customers"
+          dot={{ fill: '#8b5cf6', r: 3 }}
+        />
+      </LineChart>
+    </ResponsiveContainer>
+  );
+};
+
+frontend/src/components/Upload.jsx
+import React, { useState } from 'react';
+import { Upload as UploadIcon, AlertCircle, CheckCircle } from 'lucide-react';
+
+const Upload = ({ onUploadSuccess, onLoadSample, loading }) => {
+  const [dragActive, setDragActive] = useState(false);
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+
+  const handleDrag = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.type === 'dragenter' || e.type === 'dragover') {
+      setDragActive(true);
+    } else if (e.type === 'dragleave') {
+      setDragActive(false);
+    }
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragActive(false);
+
+    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+      handleFile(e.dataTransfer.files[0]);
+    }
+  };
+
+  const handleChange = (e) => {
+    e.preventDefault();
+    if (e.target.files && e.target.files[0]) {
+      handleFile(e.target.files[0]);
+    }
+  };
+
+  const handleFile = (file) => {
+    setError('');
+    setSuccess('');
+
+    // Validate file type
+    if (!file.name.endsWith('.csv')) {
+      setError('Please upload a CSV file');
+      return;
+    }
+
+    // Validate file size (10MB max)
+    if (file.size > 10 * 1024 * 1024) {
+      setError('File size must be less than 10MB');
+      return;
+    }
+
+    setSuccess('File uploaded successfully!');
+    onUploadSuccess(file);
+  };
+
+  return (
+    <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
+      <div className="flex flex-col md:flex-row gap-4 items-center justify-between">
+        <div className="flex items-center gap-3">
+          <UploadIcon className="text-blue-400" size={24} />
+          <div>
+            <h3 className="font-semibold text-lg">Upload Sales Data</h3>
+            <p className="text-sm text-gray-400">
+              CSV format: date, product_name, customer_id, revenue, quantity, visitors
+            </p>
+          </div>
+        </div>
+
+        <div className="flex gap-3">
+          <label
+            className={`px-4 py-2 rounded-lg cursor-pointer transition-colors ${
+              loading
+                ? 'bg-gray-600 cursor-not-allowed'
+                : 'bg-blue-600 hover:bg-blue-700'
+            }`}
+          >
+            <input
+              type="file"
+              accept=".csv"
+              onChange={handleChange}
+              disabled={loading}
+              className="hidden"
+            />
+            {loading ? 'Processing...' : 'Upload CSV'}
+          </label>
+
+          <button
+            onClick={onLoadSample}
+            disabled={loading}
+            className={`px-4 py-2 rounded-lg transition-colors ${
+              loading
+                ? 'bg-gray-600 cursor-not-allowed'
+                : 'bg-purple-600 hover:bg-purple-700'
+            }`}
+          >
+            Load Sample Data
+          </button>
+        </div>
+      </div>
+
+      {/* Drag and Drop Zone */}
+      <div
+        className={`mt-4 border-2 border-dashed rounded-lg p-8 text-center transition-colors ${
+          dragActive
+            ? 'border-blue-500 bg-blue-900/20'
+            : 'border-gray-600 hover:border-gray-500'
+        }`}
+        onDragEnter={handleDrag}
+        onDragLeave={handleDrag}
+        onDragOver={handleDrag}
+        onDrop={handleDrop}
+      >
+        <UploadIcon className="mx-auto mb-3 text-gray-400" size={48} />
+        <p className="text-gray-300 mb-1">Drag and drop your CSV file here</p>
+        <p className="text-sm text-gray-500">or click the upload button above</p>
+      </div>
+
+      {/* Error Message */}
+      {error && (
+        <div className="mt-4 p-3 bg-red-900/20 border border-red-500 rounded-lg flex items-center gap-2">
+          <AlertCircle className="text-red-500" size={20} />
+          <span className="text-red-200">{error}</span>
+        </div>
+      )}
+
+      {/* Success Message */}
+      {success && (
+        <div className="mt-4 p-3 bg-green-900/20 border border-green-500 rounded-lg flex items-center gap-2">
+          <CheckCircle className="text-green-500" size={20} />
+          <span className="text-green-200">{success}</span>
+        </div>
+      )}
+
+      {/* Sample CSV Format */}
+      <div className="mt-4 p-4 bg-gray-900 rounded-lg">
+        <p className="text-xs text-gray-400 mb-2">Sample CSV Format:</p>
+        <pre className="text-xs text-gray-300 overflow-x-auto">
+{`date,product_name,customer_id,revenue,quantity,visitors
+2024-01-15,Wireless Headphones,C001,89.99,1,150
+2024-01-16,Smart Watch,C002,199.99,1,200`}
+        </pre>
+      </div>
+    </div>
+  );
+};
+
+export default Upload;
+
+frontend/src/services/api.js
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+
+// Upload CSV file
+export const uploadCSV = async (file) => {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const response = await fetch(`${API_URL.replace('/api', '')}/api/upload`, {
+    method: 'POST',
+    body: formData
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error || 'Upload failed');
+  }
+
+  return response.json();
+};
+
+// Process uploaded CSV
+export const processCSV = async (filename) => {
+  const response = await fetch(`${API_URL}/analytics/process`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ filename })
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error || 'Processing failed');
+  }
+
+  return response.json();
+};
+
+// Get sample data
+export const getSampleData = async () => {
+  const response = await fetch(`${API_URL}/analytics/sample`);
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error || 'Failed to load sample data');
+  }
+
+  return response.json();
+};
+
+// Get AI recommendations
+export const getRecommendations = async (data) => {
+  const response = await fetch(`${API_URL}/analytics/recommendations`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(data)
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error || 'Failed to get recommendations');
+  }
+
+  return response.json();
+};
+
+// Health check
+export const healthCheck = async () => {
+  const response = await fetch(`${API_URL}/health`);
+  
+  if (!response.ok) {
+    throw new Error('API is not available');
+  }
+
+  return response.json();
+};
+
+
+
+frontend/src/pages/Dashboard.jsx
+import React, { useState, useEffect } from 'react';
+import { 
+  TrendingUp, 
+  DollarSign, 
+  Users, 
+  Package, 
+  BarChart3,
+  AlertTriangle,
+  Lightbulb,
+  Target
+} from 'lucide-react';
+import KPI from '../components/KPI';
+import Upload from '../components/Upload';
+import { 
+  RevenueChart, 
+  OrdersCustomersChart, 
+  TopProductsChart,
+  ConversionRateChart,
+  CustomerGrowthChart
+} from '../components/Charts';
+import { uploadCSV, processCSV, getSampleData, getRecommendations } from '../services/api';
+
+const Dashboard = () => {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [data, setData] = useState(null);
+  const [recommendations, setRecommendations] = useState([]);
+
+  // Handle CSV upload
+  const handleUpload = async (file) => {
+    setLoading(true);
+    setError('');
+
+    try {
+      // Upload file
+      const uploadResult = await uploadCSV(file);
+      
+      // Process file
+      const processResult = await processCSV(uploadResult.filename);
+      
+      if (processResult.success) {
+        setData(processResult.data);
+        
+        // Get recommendations
+        const recsResult = await getRecommendations({
+          kpis: processResult.data.kpis,
+          topProducts: processResult.data.topProducts,
+          monthlyTrends: processResult.data.monthlyTrends
+        });
+        
+        if (recsResult.success) {
+          setRecommendations(recsResult.recommendations);
+        }
+      }
+    } catch (err) {
+      setError(err.message);
+      console.error('Upload error:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Load sample data
+  const handleLoadSample = async () => {
+    setLoading(true);
+    setError('');
+
+    try {
+      const result = await getSampleData();
+      
+      if (result.success) {
+        setData(result.data);
+        
+        // Get recommendations
+        const recsResult = await getRecommendations({
+          kpis: result.data.kpis,
+          topProducts: result.data.topProducts,
+          monthlyTrends: result.data.monthlyTrends
+        });
+        
+        if (recsResult.success) {
+          setRecommendations(recsResult.recommendations);
+        }
+      }
+    } catch (err) {
+      setError(err.message);
+      console.error('Sample data error:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const getPriorityIcon = (priority) => {
+    return priority === 'high' ? AlertTriangle : Lightbulb;
+  };
+
+  const getPriorityColor = (priority) => {
+    return priority === 'high' ? 'border-red-500 bg-red-900/20' : 'border-blue-500 bg-blue-900/20';
+  };
+
+  return (
+    <div className="min-h-screen bg-gray-900 text-gray-100 p-6">
+      <div className="max-w-7xl mx-auto">
+        {/* Header */}
+        <div className="mb-8">
+          <h1 className="text-4xl font-bold mb-2 bg-gradient-to-r from-blue-400 to-purple-500 bg-clip-text text-transparent">
+            E-Commerce Analytics Dashboard
+          </h1>
+          <p className="text-gray-400">
+            Track sales, conversions, and trends with AI-powered insights
+          </p>
+        </div>
+
+        {/* Upload Section */}
+        <Upload
+          onUploadSuccess={handleUpload}
+          onLoadSample={handleLoadSample}
+          loading={loading}
+        />
+
+        {/* Error Message */}
+        {error && (
+          <div className="mt-6 p-4 bg-red-900/20 border border-red-500 rounded-lg">
+            <p className="text-red-200">{error}</p>
+          </div>
+        )}
+
+        {/* Loading State */}
+        {loading && (
+          <div className="text-center py-12">
+            <div className="inline-block animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
+            <p className="mt-4 text-gray-400">Processing your data...</p>
+          </div>
+        )}
+
+        {/* Dashboard Content */}
+        {data && !loading && (
+          <>
+            {/* KPI Cards */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mt-6">
+              <KPI
+                title="Total Revenue"
+                value={`$${data.kpis.totalRevenue.toLocaleString()}`}
+                icon={DollarSign}
+                subtitle="All Time"
+                color="blue"
+              />
+              <KPI
+                title="Total Orders"
+                value={data.kpis.totalOrders.toLocaleString()}
+                icon={Package}
+                subtitle="Completed"
+                color="purple"
+              />
+              <KPI
+                title="Unique Customers"
+                value={data.kpis.uniqueCustomers.toLocaleString()}
+                icon={Users}
+                subtitle="Active"
+                color="pink"
+              />
+              <KPI
+                title="Conversion Rate"
+                value={`${data.kpis.conversionRate}%`}
+                icon={TrendingUp}
+                subtitle="Overall"
+                color="orange"
+              />
+            </div>
+
+            {/* Charts Row 1 */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+              {/* Revenue Trend */}
+              <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
+                <h3 className="text-xl font-semibold mb-4 flex items-center gap-2">
+                  <TrendingUp className="text-blue-400" size={20} />
+                  Revenue Trend
+                </h3>
+                <RevenueChart data={data.monthlyTrends} />
+                {data.predictions && (
+                  <div className="mt-4 p-3 bg-blue-900/20 border border-blue-500 rounded-lg">
+                    <p className="text-sm">
+                      <strong>AI Prediction:</strong> Next month revenue estimated at{' '}
+                      <span className="text-blue-400 font-bold">
+                        ${data.predictions.predictedRevenue.toLocaleString()}
+                      </span>
+                      {' '}({data.predictions.confidence}% confidence)
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {/* Orders & Customers */}
+              <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
+                <h3 className="text-xl font-semibold mb-4 flex items-center gap-2">
+                  <BarChart3 className="text-purple-400" size={20} />
+                  Orders & Customers
+                </h3>
+                <OrdersCustomersChart data={data.monthlyTrends} />
+              </div>
+            </div>
+
+            {/* Charts Row 2 */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+              {/* Top Products */}
+              <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
+                <h3 className="text-xl font-semibold mb-4 flex items-center gap-2">
+                  <Package className="text-green-400" size={20} />
+                  Top Products by Revenue
+                </h3>
+                <TopProductsChart data={data.topProducts.slice(0, 5)} />
+              </div>
+
+              {/* Conversion Rate */}
+              <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
+                <h3 className="text-xl font-semibold mb-4 flex items-center gap-2">
+                  <Target className="text-yellow-400" size={20} />
+                  Conversion Rate Trend
+                </h3>
+                <ConversionRateChart data={data.monthlyTrends} />
+              </div>
+            </div>
+
+            {/* Customer Growth */}
+            {data.customerGrowth && (
+              <div className="bg-gray-800 rounded-lg p-6 border border-gray-700 mt-6">
+                <h3 className="text-xl font-semibold mb-4 flex items-center gap-2">
+                  <Users className="text-pink-400" size={20} />
+                  Customer Growth
+                </h3>
+                <CustomerGrowthChart data={data.customerGrowth} />
+              </div>
+            )}
+
+            {/* AI Recommendations */}
+            {recommendations.length > 0 && (
+              <div className="bg-gray-800 rounded-lg p-6 border border-gray-700 mt-6">
+                <h3 className="text-xl font-semibold mb-4 flex items-center gap-2">
+                  <Lightbulb className="text-yellow-400" size={20} />
+                  AI-Powered Recommendations
+                </h3>
+                <div className="space-y-3">
+                  {recommendations.map((rec, idx) => {
+                    const Icon = getPriorityIcon(rec.priority);
+                    return (
+                      <div
+                        key={idx}
+                        className={`p-4 rounded-lg border-l-4 ${getPriorityColor(rec.priority)}`}
+                      >
+                        <div className="flex items-start gap-3">
+                          <Icon className={rec.priority === 'high' ? 'text-red-400' : 'text-blue-400'} size={20} />
+                          <div className="flex-1">
+                            <h4 className="font-semibold mb-1 flex items-center gap-2">
+                              {rec.title}
+                              <span
+                                className={`text-xs px-2 py-1 rounded ${
+                                  rec.priority === 'high' ? 'bg-red-600' : 'bg-blue-600'
+                                }`}
+                              >
+                                {rec.priority}
+                              </span>
+                            </h4>
+                            <p className="text-sm text-gray-300 mb-2">{rec.message}</p>
+                            {rec.action && (
+                              <p className="text-xs text-gray-400">
+                                <strong>Suggested Action:</strong> {rec.action}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Product Performance Table */}
+            <div className="bg-gray-800 rounded-lg p-6 border border-gray-700 mt-6">
+              <h3 className="text-xl font-semibold mb-4">Product Performance</h3>
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="border-b border-gray-700">
+                      <th className="text-left py-3 px-4">Product</th>
+                      <th className="text-right py-3 px-4">Revenue</th>
+                      <th className="text-right py-3 px-4">Orders</th>
+                      <th className="text-right py-3 px-4">Quantity</th>
+                      <th className="text-right py-3 px-4">Avg Price</th>
+                      {data.topProducts[0]?.trendScore && (
+                        <th className="text-right py-3 px-4">Trend</th>
+                      )}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.topProducts.map((product, idx) => (
+                      <tr
+                        key={idx}
+                        className="border-b border-gray-700/50 hover:bg-gray-700/30"
+                      >
+                        <td className="py-3 px-4">{product.name}</td>
+                        <td className="text-right py-3 px-4 font-semibold text-green-400">
+                          ${product.revenue.toLocaleString()}
+                        </td>
+                        <td className="text-right py-3 px-4">{product.orders}</td>
+                        <td className="text-right py-3 px-4">{product.quantity}</td>
+                        <td className="text-right py-3 px-4">
+                          ${product.avgPrice.toFixed(2)}
+                        </td>
+                        {product.trendScore && (
+                          <td className="text-right py-3 px-4">
+                            <span
+                              className={`px-2 py-1 rounded text-xs ${
+                                product.trendScore.direction === 'hot' || product.trendScore.direction === 'rising'
+                                  ? 'bg-green-600'
+                                  : product.trendScore.direction === 'cold' || product.trendScore.direction === 'declining'
+                                  ? 'bg-red-600'
+                                  : 'bg-gray-600'
+                              }`}
+                            >
+                              {product.trendScore.direction}
+                            </span>
+                          </td>
+                        )}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </>
+        )}
+
+        {/* Empty State */}
+        {!data && !loading && !error && (
+          <div className="text-center py-20">
+            <BarChart3 className="mx-auto mb-4 text-gray-600" size={64} />
+            <h3 className="text-2xl font-semibold mb-2 text-gray-400">
+              No Data Yet
+            </h3>
+            <p className="text-gray-500 mb-6">
+              Upload a CSV file or load sample data to get started with analytics
+            </p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+export default Dashboard;
+
+frontend/src/App.jsx
+
+import React from 'react';
+import Dashboard from './pages/Dashboard';
+import './index.css';
+
+function App() {
+  return (
+    <div className="App">
+      <Dashboard />
+    </div>
+  );
+}
+
+export default App;
+
+frontend/src/main.jsx
+import React from 'react';
+import ReactDOM from 'react-dom/client';
+import App from './App.jsx';
+import './index.css';
+
+ReactDOM.createRoot(document.getElementById('root')).render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>
+);
+
+
+frontend/src/index.css
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  
+  color-scheme: dark;
+  color: rgba(255, 255, 255, 0.87);
+  background-color: #111827;
+  
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background-color: #111827;
+}
+
+#root {
+  width: 100%;
+  min-height: 100vh;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: #1f2937;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #374151;
+  border-radius: 5px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #4b5563;
+}
+
+/* Animations */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.3s ease-in-out;
+}
+
+frontend/tailwind.config.js
+/** @type {import('tailwindcss').Config} */
+export default {
+  content: [
+    "./index.html",
+    "./src/**/*.{js,ts,jsx,tsx}",
+  ],
+  theme: {
+    extend: {
+      colors: {
+        gray: {
+          900: '#111827',
+          800: '#1f2937',
+          700: '#374151',
+          600: '#4b5563',
+          500: '#6b7280',
+          400: '#9ca3af',
+          300: '#d1d5db',
+          200: '#e5e7eb',
+          100: '#f3f4f6',
+        },
+      },
+      animation: {
+        'spin-slow': 'spin 3s linear infinite',
+      },
+    },
+  },
+  plugins: [],
+}
+
+frontend/package.json
+{
+  "name": "ecommerce-analytics-frontend",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "recharts": "^2.10.3",
+    "lucide-react": "^0.263.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.43",
+    "@types/react-dom": "^18.2.17",
+    "@vitejs/plugin-react": "^4.2.1",
+    "autoprefixer": "^10.4.16",
+    "postcss": "^8.4.32",
+    "tailwindcss": "^3.4.0",
+    "vite": "^5.0.8"
+  }
+}
+
+frontend/vite.config.js
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+
+// https://vitejs.dev/config/
+export default defineConfig({
+  plugins: [react()],
+  server: {
+    port: 5173,
+    proxy: {
+      '/api': {
+        target: 'http://localhost:5000',
+        changeOrigin: true,
+      }
+    }
+  }
+})
+
+frontend/postcss.config.js
+export default {
+  plugins: {
+    tailwindcss: {},
+    autoprefixer: {},
+  },
 }

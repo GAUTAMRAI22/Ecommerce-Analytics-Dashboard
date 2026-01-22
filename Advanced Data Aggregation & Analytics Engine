@@ -1,0 +1,359 @@
+// backend/utils/dataAggregator.js
+const { ARIMAPredictor, KMeansClustering, ExponentialSmoothing, AnomalyDetector } = require('./advancedML');
+
+class DataAggregator {
+  constructor() {
+    this.data = [];
+    this.aggregations = new Map();
+    this.pipeline = [];
+  }
+
+  load(rawData) {
+    this.data = rawData;
+    return this;
+  }
+
+  // Complex aggregation pipeline
+  aggregate(pipeline) {
+    this.pipeline = pipeline;
+    let result = [...this.data];
+
+    for (const stage of pipeline) {
+      result = this.executeStage(result, stage);
+    }
+
+    return result;
+  }
+
+  executeStage(data, stage) {
+    const { operation, params } = stage;
+
+    switch (operation) {
+      case 'group':
+        return this.groupBy(data, params);
+      case 'filter':
+        return this.filterData(data, params);
+      case 'transform':
+        return this.transformData(data, params);
+      case 'join':
+        return this.joinData(data, params);
+      case 'window':
+        return this.windowFunction(data, params);
+      case 'pivot':
+        return this.pivotData(data, params);
+      default:
+        return data;
+    }
+  }
+
+  groupBy(data, params) {
+    const { keys, aggregations } = params;
+    const groups = new Map();
+
+    data.forEach(row => {
+      const key = keys.map(k => row[k]).join('|');
+      
+      if (!groups.has(key)) {
+        groups.set(key, []);
+      }
+      
+      groups.get(key).push(row);
+    });
+
+    const results = [];
+    
+    groups.forEach((group, key) => {
+      const keyParts = key.split('|');
+      const result = {};
+      
+      keys.forEach((k, idx) => {
+        result[k] = keyParts[idx];
+      });
+
+      aggregations.forEach(agg => {
+        result[agg.name] = this.computeAggregation(group, agg);
+      });
+
+      results.push(result);
+    });
+
+    return results;
+  }
+
+  computeAggregation(group, agg) {
+    const { field, function: fn } = agg;
+    const values = group.map(row => parseFloat(row[field]) || 0);
+
+    switch (fn) {
+      case 'sum':
+        return values.reduce((a, b) => a + b, 0);
+      case 'avg':
+        return values.reduce((a, b) => a + b, 0) / values.length;
+      case 'min':
+        return Math.min(...values);
+      case 'max':
+        return Math.max(...values);
+      case 'count':
+        return values.length;
+      case 'median':
+        const sorted = [...values].sort((a, b) => a - b);
+        const mid = Math.floor(sorted.length / 2);
+        return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+      case 'stddev':
+        const mean = values.reduce((a, b) => a + b, 0) / values.length;
+        const variance = values.reduce((sum, x) => sum + Math.pow(x - mean, 2), 0) / values.length;
+        return Math.sqrt(variance);
+      case 'percentile_95':
+        const sorted95 = [...values].sort((a, b) => a - b);
+        const idx95 = Math.floor(sorted95.length * 0.95);
+        return sorted95[idx95];
+      default:
+        return null;
+    }
+  }
+
+  filterData(data, params) {
+    const { conditions } = params;
+    
+    return data.filter(row => {
+      return conditions.every(condition => {
+        const { field, operator, value } = condition;
+        const rowValue = row[field];
+
+        switch (operator) {
+          case '=':
+            return rowValue == value;
+          case '!=':
+            return rowValue != value;
+          case '>':
+            return parseFloat(rowValue) > parseFloat(value);
+          case '<':
+            return parseFloat(rowValue) < parseFloat(value);
+          case '>=':
+            return parseFloat(rowValue) >= parseFloat(value);
+          case '<=':
+            return parseFloat(rowValue) <= parseFloat(value);
+          case 'in':
+            return value.includes(rowValue);
+          case 'contains':
+            return String(rowValue).includes(String(value));
+          case 'regex':
+            return new RegExp(value).test(String(rowValue));
+          default:
+            return true;
+        }
+      });
+    });
+  }
+
+  transformData(data, params) {
+    const { transformations } = params;
+    
+    return data.map(row => {
+      const newRow = { ...row };
+      
+      transformations.forEach(transform => {
+        const { field, function: fn, params: fnParams } = transform;
+        
+        switch (fn) {
+          case 'parse_date':
+            newRow[field] = new Date(row[field]);
+            break;
+          case 'extract_month':
+            newRow[field] = new Date(row[fnParams.dateField]).getMonth() + 1;
+            break;
+          case 'extract_year':
+            newRow[field] = new Date(row[fnParams.dateField]).getFullYear();
+            break;
+          case 'calculate':
+            newRow[field] = this.evaluateExpression(row, fnParams.expression);
+            break;
+          case 'normalize':
+            newRow[field] = this.normalize(parseFloat(row[field]), fnParams.min, fnParams.max);
+            break;
+          case 'bin':
+            newRow[field] = this.binValue(parseFloat(row[field]), fnParams.bins);
+            break;
+          default:
+            break;
+        }
+      });
+      
+      return newRow;
+    });
+  }
+
+  evaluateExpression(row, expression) {
+    // Safe expression evaluation (limited to arithmetic)
+    const context = { ...row };
+    const sanitized = expression.replace(/[^0-9+\-*/(). ]/g, match => {
+      return context[match] || 0;
+    });
+    
+    try {
+      return Function(`"use strict"; return (${sanitized})`)();
+    } catch {
+      return 0;
+    }
+  }
+
+  normalize(value, min, max) {
+    return (value - min) / (max - min);
+  }
+
+  binValue(value, bins) {
+    for (let i = 0; i < bins.length - 1; i++) {
+      if (value >= bins[i] && value < bins[i + 1]) {
+        return `${bins[i]}-${bins[i + 1]}`;
+      }
+    }
+    return `${bins[bins.length - 1]}+`;
+  }
+
+  joinData(data, params) {
+    const { rightData, leftKey, rightKey, type = 'inner' } = params;
+    const results = [];
+
+    if (type === 'inner') {
+      data.forEach(leftRow => {
+        rightData.forEach(rightRow => {
+          if (leftRow[leftKey] === rightRow[rightKey]) {
+            results.push({ ...leftRow, ...rightRow });
+          }
+        });
+      });
+    } else if (type === 'left') {
+      data.forEach(leftRow => {
+        const matches = rightData.filter(r => r[rightKey] === leftRow[leftKey]);
+        if (matches.length > 0) {
+          matches.forEach(match => {
+            results.push({ ...leftRow, ...match });
+          });
+        } else {
+          results.push(leftRow);
+        }
+      });
+    }
+
+    return results;
+  }
+
+  windowFunction(data, params) {
+    const { partitionBy, orderBy, windowSize, function: fn } = params;
+    
+    // Partition data
+    const partitions = new Map();
+    data.forEach(row => {
+      const key = partitionBy.map(k => row[k]).join('|');
+      if (!partitions.has(key)) {
+        partitions.set(key, []);
+      }
+      partitions.get(key).push(row);
+    });
+
+    // Sort each partition
+    partitions.forEach(partition => {
+      partition.sort((a, b) => {
+        for (const order of orderBy) {
+          const aVal = a[order.field];
+          const bVal = b[order.field];
+          if (aVal !== bVal) {
+            return order.direction === 'asc' ? aVal - bVal : bVal - aVal;
+          }
+        }
+        return 0;
+      });
+    });
+
+    // Apply window function
+    const results = [];
+    partitions.forEach(partition => {
+      partition.forEach((row, idx) => {
+        const windowStart = Math.max(0, idx - windowSize + 1);
+        const windowEnd = idx + 1;
+        const window = partition.slice(windowStart, windowEnd);
+        
+        const newRow = { ...row };
+        
+        switch (fn) {
+          case 'moving_avg':
+            const values = window.map(r => parseFloat(r[params.field]) || 0);
+            newRow[params.outputField] = values.reduce((a, b) => a + b, 0) / values.length;
+            break;
+          case 'rank':
+            newRow[params.outputField] = idx + 1;
+            break;
+          case 'row_number':
+            newRow[params.outputField] = idx + 1;
+            break;
+          case 'lag':
+            const lagIdx = idx - (params.lag || 1);
+            newRow[params.outputField] = lagIdx >= 0 ? partition[lagIdx][params.field] : null;
+            break;
+          case 'lead':
+            const leadIdx = idx + (params.lead || 1);
+            newRow[params.outputField] = leadIdx < partition.length ? partition[leadIdx][params.field] : null;
+            break;
+        }
+        
+        results.push(newRow);
+      });
+    });
+
+    return results;
+  }
+
+  pivotData(data, params) {
+    const { index, columns, values, aggFunc } = params;
+    const pivotMap = new Map();
+
+    data.forEach(row => {
+      const indexKey = index.map(k => row[k]).join('|');
+      const columnKey = columns.map(k => row[k]).join('|');
+      
+      if (!pivotMap.has(indexKey)) {
+        pivotMap.set(indexKey, new Map());
+      }
+      
+      const rowMap = pivotMap.get(indexKey);
+      if (!rowMap.has(columnKey)) {
+        rowMap.set(columnKey, []);
+      }
+      
+      rowMap.get(columnKey).push(parseFloat(row[values]) || 0);
+    });
+
+    const results = [];
+    pivotMap.forEach((rowMap, indexKey) => {
+      const result = {};
+      const indexParts = indexKey.split('|');
+      index.forEach((k, idx) => {
+        result[k] = indexParts[idx];
+      });
+
+      rowMap.forEach((vals, columnKey) => {
+        let aggValue;
+        switch (aggFunc) {
+          case 'sum':
+            aggValue = vals.reduce((a, b) => a + b, 0);
+            break;
+          case 'avg':
+            aggValue = vals.reduce((a, b) => a + b, 0) / vals.length;
+            break;
+          case 'count':
+            aggValue = vals.length;
+            break;
+          default:
+            aggValue = vals.reduce((a, b) => a + b, 0);
+        }
+        result[columnKey] = aggValue;
+      });
+
+      results.push(result);
+    });
+
+    return results;
+  }
+}
+
+module.exports = DataAggregator;

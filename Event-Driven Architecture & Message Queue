@@ -1,0 +1,494 @@
+// backend/events/eventBus.js
+class EventBus {
+  constructor() {
+    this.listeners = new Map();
+    this.middlewares = [];
+    this.eventHistory = [];
+    this.maxHistorySize = 1000;
+  }
+
+  use(middleware) {
+    this.middlewares.push(middleware);
+    return this;
+  }
+
+  on(eventName, callback, options = {}) {
+    if (!this.listeners.has(eventName)) {
+      this.listeners.set(eventName, []);
+    }
+    
+    const listener = {
+      callback,
+      priority: options.priority || 0,
+      once: options.once || false,
+      id: Math.random().toString(36).substr(2, 9)
+    };
+    
+    this.listeners.get(eventName).push(listener);
+    this.listeners.get(eventName).sort((a, b) => b.priority - a.priority);
+    
+    return listener.id;
+  }
+
+  once(eventName, callback, options = {}) {
+    return this.on(eventName, callback, { ...options, once: true });
+  }
+
+  off(eventName, listenerId) {
+    if (!this.listeners.has(eventName)) return;
+    
+    const listeners = this.listeners.get(eventName);
+    const index = listeners.findIndex(l => l.id === listenerId);
+    
+    if (index !== -1) {
+      listeners.splice(index, 1);
+    }
+  }
+
+  async emit(eventName, data, metadata = {}) {
+    const event = {
+      name: eventName,
+      data,
+      metadata: {
+        ...metadata,
+        timestamp: Date.now(),
+        id: Math.random().toString(36).substr(2, 9)
+      }
+    };
+    
+    // Store in history
+    this.eventHistory.push(event);
+    if (this.eventHistory.length > this.maxHistorySize) {
+      this.eventHistory.shift();
+    }
+    
+    // Apply middlewares
+    let processedEvent = event;
+    for (const middleware of this.middlewares) {
+      processedEvent = await middleware(processedEvent);
+      if (!processedEvent) return; // Middleware cancelled event
+    }
+    
+    // Execute listeners
+    if (!this.listeners.has(eventName)) return;
+    
+    const listeners = this.listeners.get(eventName);
+    const toRemove = [];
+    
+    for (const listener of listeners) {
+      try {
+        await listener.callback(processedEvent.data, processedEvent.metadata);
+        
+        if (listener.once) {
+          toRemove.push(listener.id);
+        }
+      } catch (error) {
+        console.error(`Error in listener for ${eventName}:`, error);
+      }
+    }
+    
+    // Remove once listeners
+    toRemove.forEach(id => this.off(eventName, id));
+  }
+
+  getHistory(eventName, limit = 100) {
+    let history = this.eventHistory;
+    
+    if (eventName) {
+      history = history.filter(e => e.name === eventName);
+    }
+    
+    return history.slice(-limit);
+  }
+
+  clear(eventName) {
+    if (eventName) {
+      this.listeners.delete(eventName);
+    } else {
+      this.listeners.clear();
+    }
+  }
+}
+
+// Message Queue implementation
+class MessageQueue {
+  constructor(options = {}) {
+    this.queues = new Map();
+    this.consumers = new Map();
+    this.deadLetterQueue = [];
+    this.maxRetries = options.maxRetries || 3;
+    this.retryDelay = options.retryDelay || 1000;
+    this.processingMessages = new Set();
+  }
+
+  createQueue(queueName, options = {}) {
+    if (this.queues.has(queueName)) {
+      throw new Error(`Queue ${queueName} already exists`);
+    }
+    
+    this.queues.set(queueName, {
+      messages: [],
+      options: {
+        maxSize: options.maxSize || 10000,
+        priority: options.priority || false,
+        durable: options.durable || false
+      },
+      stats: {
+        enqueued: 0,
+        dequeued: 0,
+        failed: 0
+      }
+    });
+  }
+
+  enqueue(queueName, message, priority = 0) {
+    const queue = this.queues.get(queueName);
+    if (!queue) {
+      throw new Error(`Queue ${queueName} does not exist`);
+    }
+    
+    if (queue.messages.length >= queue.options.maxSize) {
+      throw new Error(`Queue ${queueName} is full`);
+    }
+    
+    const queueMessage = {
+      id: Math.random().toString(36).substr(2, 9),
+      data: message,
+      priority,
+      retries: 0,
+      enqueuedAt: Date.now(),
+      processedAt: null
+    };
+    
+    queue.messages.push(queueMessage);
+    
+    if (queue.options.priority) {
+      queue.messages.sort((a, b) => b.priority - a.priority);
+    }
+    
+    queue.stats.enqueued++;
+    
+    // Trigger consumer if available
+    this.processQueue(queueName);
+    
+    return queueMessage.id;
+  }
+
+  dequeue(queueName) {
+    const queue = this.queues.get(queueName);
+    if (!queue || queue.messages.length === 0) {
+      return null;
+    }
+    
+    const message = queue.messages.shift();
+    message.processedAt = Date.now();
+    queue.stats.dequeued++;
+    
+    this.processingMessages.add(message.id);
+    
+    return message;
+  }
+
+  ack(queueName, messageId) {
+    this.processingMessages.delete(messageId);
+  }
+
+  nack(queueName, messageId, requeue = true) {
+    this.processingMessages.delete(messageId);
+    
+    const queue = this.queues.get(queueName);
+    if (!queue) return;
+    
+    // Find message in processing
+    if (requeue) {
+      // Re-add to queue with incremented retry count
+      const message = { 
+        id: messageId, 
+        retries: 1, 
+        enqueuedAt: Date.now() 
+      };
+      
+      if (message.retries < this.maxRetries) {
+        setTimeout(() => {
+          queue.messages.push(message);
+        }, this.retryDelay * message.retries);
+      } else {
+        this.deadLetterQueue.push(message);
+        queue.stats.failed++;
+      }
+    }
+  }
+
+  subscribe(queueName, handler, options = {}) {
+    if (!this.consumers.has(queueName)) {
+      this.consumers.set(queueName, []);
+    }
+    
+    const consumer = {
+      id: Math.random().toString(36).substr(2, 9),
+      handler,
+      options: {
+        concurrency: options.concurrency || 1,
+        batchSize: options.batchSize || 1
+      },
+      active: true
+    };
+    
+    this.consumers.get(queueName).push(consumer);
+    this.processQueue(queueName);
+    
+    return consumer.id;
+  }
+
+  unsubscribe(queueName, consumerId) {
+    if (!this.consumers.has(queueName)) return;
+    
+    const consumers = this.consumers.get(queueName);
+    const index = consumers.findIndex(c => c.id === consumerId);
+    
+    if (index !== -1) {
+      consumers[index].active = false;
+      consumers.splice(index, 1);
+    }
+  }
+
+  async processQueue(queueName) {
+    const queue = this.queues.get(queueName);
+    const consumers = this.consumers.get(queueName) || [];
+    
+    if (!queue || consumers.length === 0) return;
+    
+    for (const consumer of consumers) {
+      if (!consumer.active) continue;
+      
+      const batch = [];
+      for (let i = 0; i < consumer.options.batchSize; i++) {
+        const message = this.dequeue(queueName);
+        if (message) batch.push(message);
+      }
+      
+      if (batch.length === 0) continue;
+      
+      try {
+        await consumer.handler(batch);
+        batch.forEach(msg => this.ack(queueName, msg.id));
+      } catch (error) {
+        console.error(`Consumer error in queue ${queueName}:`, error);
+        batch.forEach(msg => this.nack(queueName, msg.id, true));
+      }
+    }
+  }
+
+  getStats(queueName) {
+    const queue = this.queues.get(queueName);
+    if (!queue) return null;
+    
+    return {
+      ...queue.stats,
+      size: queue.messages.length,
+      processing: Array.from(this.processingMessages).length,
+      consumers: (this.consumers.get(queueName) || []).length
+    };
+  }
+
+  purge(queueName) {
+    const queue = this.queues.get(queueName);
+    if (queue) {
+      queue.messages = [];
+    }
+  }
+}
+
+// Saga pattern implementation for distributed transactions
+class SagaOrchestrator {
+  constructor(eventBus) {
+    this.eventBus = eventBus;
+    this.sagas = new Map();
+    this.activeSagas = new Map();
+  }
+
+  define(sagaName, steps) {
+    this.sagas.set(sagaName, {
+      steps,
+      compensations: steps.map(s => s.compensate)
+    });
+  }
+
+  async execute(sagaName, initialData) {
+    const saga = this.sagas.get(sagaName);
+    if (!saga) {
+      throw new Error(`Saga ${sagaName} not found`);
+    }
+    
+    const sagaId = Math.random().toString(36).substr(2, 9);
+    const execution = {
+      id: sagaId,
+      name: sagaName,
+      currentStep: 0,
+      data: initialData,
+      completedSteps: [],
+      status: 'running',
+      startedAt: Date.now()
+    };
+    
+    this.activeSagas.set(sagaId, execution);
+    
+    try {
+      for (let i = 0; i < saga.steps.length; i++) {
+        const step = saga.steps[i];
+        
+        execution.currentStep = i;
+        
+        await this.eventBus.emit('saga.step.start', {
+          sagaId,
+          step: i,
+          stepName: step.name
+        });
+        
+        const result = await step.execute(execution.data);
+        execution.data = { ...execution.data, ...result };
+        execution.completedSteps.push(i);
+        
+        await this.eventBus.emit('saga.step.complete', {
+          sagaId,
+          step: i,
+          stepName: step.name,
+          result
+        });
+      }
+      
+      execution.status = 'completed';
+      execution.completedAt = Date.now();
+      
+      await this.eventBus.emit('saga.complete', {
+        sagaId,
+        duration: execution.completedAt - execution.startedAt
+      });
+      
+      return execution.data;
+    } catch (error) {
+      execution.status = 'compensating';
+      
+      await this.eventBus.emit('saga.failed', {
+        sagaId,
+        error: error.message,
+        failedStep: execution.currentStep
+      });
+      
+      await this.compensate(sagaId, saga, execution);
+      
+      throw error;
+    } finally {
+      this.activeSagas.delete(sagaId);
+    }
+  }
+
+  async compensate(sagaId, saga, execution) {
+    const completedSteps = execution.completedSteps.reverse();
+    
+    for (const stepIndex of completedSteps) {
+      const compensation = saga.compensations[stepIndex];
+      
+      if (compensation) {
+        try {
+          await compensation(execution.data);
+          
+          await this.eventBus.emit('saga.compensate.success', {
+            sagaId,
+            step: stepIndex
+          });
+        } catch (error) {
+          await this.eventBus.emit('saga.compensate.failed', {
+            sagaId,
+            step: stepIndex,
+            error: error.message
+          });
+        }
+      }
+    }
+    
+    execution.status = 'compensated';
+    execution.compensatedAt = Date.now();
+  }
+
+  getActiveSagas() {
+    return Array.from(this.activeSagas.values());
+  }
+}
+
+// Circuit breaker pattern
+class CircuitBreaker {
+  constructor(options = {}) {
+    this.failureThreshold = options.failureThreshold || 5;
+    this.successThreshold = options.successThreshold || 2;
+    this.timeout = options.timeout || 60000;
+    this.state = 'CLOSED';
+    this.failureCount = 0;
+    this.successCount = 0;
+    this.nextAttempt = Date.now();
+  }
+
+  async execute(fn) {
+    if (this.state === 'OPEN') {
+      if (Date.now() < this.nextAttempt) {
+        throw new Error('Circuit breaker is OPEN');
+      }
+      this.state = 'HALF_OPEN';
+    }
+    
+    try {
+      const result = await fn();
+      this.onSuccess();
+      return result;
+    } catch (error) {
+      this.onFailure();
+      throw error;
+    }
+  }
+
+  onSuccess() {
+    this.failureCount = 0;
+    
+    if (this.state === 'HALF_OPEN') {
+      this.successCount++;
+      
+      if (this.successCount >= this.successThreshold) {
+        this.state = 'CLOSED';
+        this.successCount = 0;
+      }
+    }
+  }
+
+  onFailure() {
+    this.failureCount++;
+    this.successCount = 0;
+    
+    if (this.failureCount >= this.failureThreshold) {
+      this.state = 'OPEN';
+      this.nextAttempt = Date.now() + this.timeout;
+    }
+  }
+
+  getState() {
+    return {
+      state: this.state,
+      failureCount: this.failureCount,
+      successCount: this.successCount,
+      nextAttempt: this.nextAttempt
+    };
+  }
+
+  reset() {
+    this.state = 'CLOSED';
+    this.failureCount = 0;
+    this.successCount = 0;
+    this.nextAttempt = Date.now();
+  }
+}
+
+module.exports = {
+  EventBus,
+  MessageQueue,
+  SagaOrchestrator,
+  CircuitBreaker
+};

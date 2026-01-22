@@ -1,0 +1,379 @@
+// backend/utils/advancedML.js
+const { linearRegression } = require('./linearRegression');
+
+// ARIMA-like time series forecasting
+class ARIMAPredictor {
+  constructor(p = 2, d = 1, q = 2) {
+    this.p = p; // autoregressive order
+    this.d = d; // differencing order
+    this.q = q; // moving average order
+    this.arCoeffs = [];
+    this.maCoeffs = [];
+  }
+
+  difference(series, order) {
+    let result = [...series];
+    for (let i = 0; i < order; i++) {
+      const diffed = [];
+      for (let j = 1; j < result.length; j++) {
+        diffed.push(result[j] - result[j - 1]);
+      }
+      result = diffed;
+    }
+    return result;
+  }
+
+  autocorrelation(series, lag) {
+    const mean = series.reduce((a, b) => a + b, 0) / series.length;
+    const variance = series.reduce((sum, x) => sum + Math.pow(x - mean, 2), 0);
+    
+    let covariance = 0;
+    for (let i = 0; i < series.length - lag; i++) {
+      covariance += (series[i] - mean) * (series[i + lag] - mean);
+    }
+    
+    return variance === 0 ? 0 : covariance / variance;
+  }
+
+  fit(series) {
+    const diffed = this.difference(series, this.d);
+    
+    // Estimate AR coefficients using Yule-Walker equations
+    const acfValues = [];
+    for (let lag = 0; lag <= this.p; lag++) {
+      acfValues.push(this.autocorrelation(diffed, lag));
+    }
+    
+    // Solve Yule-Walker equations (simplified)
+    this.arCoeffs = [];
+    for (let i = 1; i <= this.p; i++) {
+      let coeff = 0;
+      for (let j = 1; j <= i; j++) {
+        coeff += acfValues[j] * (acfValues[0] || 1);
+      }
+      this.arCoeffs.push(coeff / (this.p * (acfValues[0] || 1)));
+    }
+    
+    // Estimate MA coefficients from residuals
+    const residuals = this.calculateResiduals(diffed);
+    this.maCoeffs = [];
+    for (let i = 1; i <= this.q; i++) {
+      this.maCoeffs.push(this.autocorrelation(residuals, i) * 0.5);
+    }
+    
+    return this;
+  }
+
+  calculateResiduals(series) {
+    const residuals = [];
+    for (let i = this.p; i < series.length; i++) {
+      let predicted = 0;
+      for (let j = 0; j < this.p; j++) {
+        predicted += this.arCoeffs[j] * series[i - j - 1];
+      }
+      residuals.push(series[i] - predicted);
+    }
+    return residuals;
+  }
+
+  forecast(series, steps = 1) {
+    const diffed = this.difference(series, this.d);
+    const predictions = [];
+    let current = [...diffed];
+    
+    for (let step = 0; step < steps; step++) {
+      let prediction = 0;
+      
+      // AR component
+      for (let i = 0; i < this.p && i < current.length; i++) {
+        prediction += this.arCoeffs[i] * current[current.length - 1 - i];
+      }
+      
+      // MA component (simplified - using recent residuals)
+      const recentResiduals = this.calculateResiduals(current).slice(-this.q);
+      for (let i = 0; i < Math.min(this.q, recentResiduals.length); i++) {
+        prediction += this.maCoeffs[i] * recentResiduals[recentResiduals.length - 1 - i];
+      }
+      
+      predictions.push(prediction);
+      current.push(prediction);
+    }
+    
+    // Integrate back
+    let integrated = predictions;
+    for (let i = 0; i < this.d; i++) {
+      const lastOriginal = series[series.length - 1];
+      integrated = integrated.map((val, idx) => 
+        idx === 0 ? lastOriginal + val : integrated[idx - 1] + val
+      );
+    }
+    
+    return integrated;
+  }
+}
+
+// K-Means Clustering for customer segmentation
+class KMeansClustering {
+  constructor(k = 3, maxIterations = 100) {
+    this.k = k;
+    this.maxIterations = maxIterations;
+    this.centroids = [];
+    this.labels = [];
+  }
+
+  euclideanDistance(point1, point2) {
+    return Math.sqrt(
+      point1.reduce((sum, val, idx) => 
+        sum + Math.pow(val - point2[idx], 2), 0
+      )
+    );
+  }
+
+  initializeCentroids(data) {
+    const centroids = [];
+    const used = new Set();
+    
+    while (centroids.length < this.k) {
+      const idx = Math.floor(Math.random() * data.length);
+      if (!used.has(idx)) {
+        centroids.push([...data[idx]]);
+        used.add(idx);
+      }
+    }
+    
+    return centroids;
+  }
+
+  assignClusters(data, centroids) {
+    return data.map(point => {
+      let minDist = Infinity;
+      let cluster = 0;
+      
+      centroids.forEach((centroid, idx) => {
+        const dist = this.euclideanDistance(point, centroid);
+        if (dist < minDist) {
+          minDist = dist;
+          cluster = idx;
+        }
+      });
+      
+      return cluster;
+    });
+  }
+
+  updateCentroids(data, labels) {
+    const newCentroids = Array(this.k).fill(null).map(() => 
+      Array(data[0].length).fill(0)
+    );
+    const counts = Array(this.k).fill(0);
+    
+    data.forEach((point, idx) => {
+      const cluster = labels[idx];
+      counts[cluster]++;
+      point.forEach((val, dim) => {
+        newCentroids[cluster][dim] += val;
+      });
+    });
+    
+    return newCentroids.map((centroid, idx) => 
+      counts[idx] > 0 
+        ? centroid.map(val => val / counts[idx])
+        : centroid
+    );
+  }
+
+  fit(data) {
+    this.centroids = this.initializeCentroids(data);
+    
+    for (let iter = 0; iter < this.maxIterations; iter++) {
+      const oldCentroids = this.centroids.map(c => [...c]);
+      
+      this.labels = this.assignClusters(data, this.centroids);
+      this.centroids = this.updateCentroids(data, this.labels);
+      
+      // Check convergence
+      const converged = this.centroids.every((centroid, idx) =>
+        this.euclideanDistance(centroid, oldCentroids[idx]) < 0.0001
+      );
+      
+      if (converged) break;
+    }
+    
+    return this;
+  }
+
+  predict(point) {
+    let minDist = Infinity;
+    let cluster = 0;
+    
+    this.centroids.forEach((centroid, idx) => {
+      const dist = this.euclideanDistance(point, centroid);
+      if (dist < minDist) {
+        minDist = dist;
+        cluster = idx;
+      }
+    });
+    
+    return cluster;
+  }
+
+  getClusterStats() {
+    const stats = Array(this.k).fill(null).map(() => ({
+      size: 0,
+      centroid: []
+    }));
+    
+    this.labels.forEach(label => {
+      stats[label].size++;
+    });
+    
+    this.centroids.forEach((centroid, idx) => {
+      stats[idx].centroid = centroid;
+    });
+    
+    return stats;
+  }
+}
+
+// Exponential Smoothing for trend analysis
+class ExponentialSmoothing {
+  constructor(alpha = 0.3, beta = 0.1, gamma = 0.1) {
+    this.alpha = alpha; // level smoothing
+    this.beta = beta;   // trend smoothing
+    this.gamma = gamma; // seasonal smoothing
+    this.level = 0;
+    this.trend = 0;
+    this.seasonal = [];
+    this.seasonalPeriod = 12;
+  }
+
+  holtWinters(series, seasonalPeriod = 12) {
+    this.seasonalPeriod = seasonalPeriod;
+    const n = series.length;
+    
+    if (n < seasonalPeriod * 2) {
+      return this.simpleExponential(series);
+    }
+    
+    // Initialize
+    this.level = series.slice(0, seasonalPeriod).reduce((a, b) => a + b, 0) / seasonalPeriod;
+    this.trend = (series[seasonalPeriod - 1] - series[0]) / (seasonalPeriod - 1);
+    
+    // Initialize seasonal components
+    this.seasonal = Array(seasonalPeriod).fill(0);
+    for (let i = 0; i < seasonalPeriod; i++) {
+      this.seasonal[i] = series[i] / this.level;
+    }
+    
+    const smoothed = [];
+    
+    for (let i = 0; i < n; i++) {
+      const seasonalIdx = i % seasonalPeriod;
+      const oldLevel = this.level;
+      const oldTrend = this.trend;
+      
+      // Update level
+      this.level = this.alpha * (series[i] / this.seasonal[seasonalIdx]) + 
+                   (1 - this.alpha) * (oldLevel + oldTrend);
+      
+      // Update trend
+      this.trend = this.beta * (this.level - oldLevel) + 
+                   (1 - this.beta) * oldTrend;
+      
+      // Update seasonal
+      this.seasonal[seasonalIdx] = this.gamma * (series[i] / this.level) + 
+                                    (1 - this.gamma) * this.seasonal[seasonalIdx];
+      
+      smoothed.push((oldLevel + oldTrend) * this.seasonal[seasonalIdx]);
+    }
+    
+    return smoothed;
+  }
+
+  simpleExponential(series) {
+    const smoothed = [series[0]];
+    
+    for (let i = 1; i < series.length; i++) {
+      smoothed.push(
+        this.alpha * series[i] + (1 - this.alpha) * smoothed[i - 1]
+      );
+    }
+    
+    return smoothed;
+  }
+
+  forecast(steps = 1) {
+    const predictions = [];
+    
+    for (let i = 0; i < steps; i++) {
+      const seasonalIdx = i % this.seasonalPeriod;
+      const forecast = (this.level + (i + 1) * this.trend) * 
+                       this.seasonal[seasonalIdx];
+      predictions.push(forecast);
+    }
+    
+    return predictions;
+  }
+}
+
+// Anomaly Detection using Z-score and IQR
+class AnomalyDetector {
+  constructor(method = 'zscore', threshold = 3) {
+    this.method = method;
+    this.threshold = threshold;
+    this.mean = 0;
+    this.stdDev = 0;
+    this.q1 = 0;
+    this.q3 = 0;
+    this.iqr = 0;
+  }
+
+  fit(data) {
+    // Calculate mean and std dev
+    this.mean = data.reduce((a, b) => a + b, 0) / data.length;
+    const variance = data.reduce((sum, x) => 
+      sum + Math.pow(x - this.mean, 2), 0
+    ) / data.length;
+    this.stdDev = Math.sqrt(variance);
+    
+    // Calculate quartiles
+    const sorted = [...data].sort((a, b) => a - b);
+    const q1Idx = Math.floor(sorted.length * 0.25);
+    const q3Idx = Math.floor(sorted.length * 0.75);
+    this.q1 = sorted[q1Idx];
+    this.q3 = sorted[q3Idx];
+    this.iqr = this.q3 - this.q1;
+    
+    return this;
+  }
+
+  detect(value) {
+    if (this.method === 'zscore') {
+      const zScore = Math.abs((value - this.mean) / this.stdDev);
+      return {
+        isAnomaly: zScore > this.threshold,
+        score: zScore,
+        method: 'zscore'
+      };
+    } else {
+      const lowerBound = this.q1 - 1.5 * this.iqr;
+      const upperBound = this.q3 + 1.5 * this.iqr;
+      return {
+        isAnomaly: value < lowerBound || value > upperBound,
+        score: value < lowerBound ? lowerBound - value : value - upperBound,
+        method: 'iqr'
+      };
+    }
+  }
+
+  detectBatch(data) {
+    return data.map(value => this.detect(value));
+  }
+}
+
+module.exports = {
+  ARIMAPredictor,
+  KMeansClustering,
+  ExponentialSmoothing,
+  AnomalyDetector
+};

@@ -1,0 +1,366 @@
+// backend/routes/advancedAnalytics.js
+const express = require("express");
+const multer = require("multer");
+const DataAggregator = require("../utils/dataAggregator");
+const { ARIMAPredictor, KMeansClustering, ExponentialSmoothing, AnomalyDetector } = require("../utils/advancedML");
+const { cache, cacheMiddleware } = require("../middleware/cacheManager");
+const rateLimiter = require("../middleware/rateLimiter");
+const { validateCSVUpload, validateDateRange } = require("../middleware/requestValidator");
+const processCSV = require("../utils/csvProcessor");
+
+const router = express.Router();
+const upload = multer({ dest: "uploads/" });
+
+// Apply rate limiting
+router.use(rateLimiter);
+
+// Time series forecasting endpoint
+router.post("/forecast", 
+  upload.single("file"), 
+  validateCSVUpload,
+  cacheMiddleware(req => `forecast:${req.file.filename}`, 600000),
+  async (req, res) => {
+    try {
+      const data = await processCSV(req.file.path);
+      const { method = 'arima', steps = 12, seasonalPeriod = 12 } = req.body;
+      
+      // Extract time series from data
+      const timeSeries = extractTimeSeries(data.charts);
+      
+      let forecast;
+      
+      if (method === 'arima') {
+        const arima = new ARIMAPredictor(2, 1, 2);
+        arima.fit(timeSeries);
+        forecast = arima.forecast(parseInt(steps));
+      } else if (method === 'exponential') {
+        const es = new ExponentialSmoothing(0.3, 0.1, 0.1);
+        es.holtWinters(timeSeries, parseInt(seasonalPeriod));
+        forecast = es.forecast(parseInt(steps));
+      } else {
+        // Default linear regression
+        const x = timeSeries.map((_, idx) => idx);
+        const model = linearRegression(x, timeSeries);
+        forecast = Array(parseInt(steps)).fill(0).map((_, idx) => 
+          model.slope * (timeSeries.length + idx) + model.intercept
+        );
+      }
+      
+      res.json({
+        historical: timeSeries,
+        forecast,
+        method,
+        confidence: calculateConfidenceIntervals(timeSeries, forecast),
+        metrics: calculateForecastMetrics(timeSeries)
+      });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  }
+);
+
+// Customer segmentation endpoint
+router.post("/segment-customers",
+  upload.single("file"),
+  validateCSVUpload,
+  async (req, res) => {
+    try {
+      const rawData = await processCSV(req.file.path);
+      const { clusters = 3 } = req.body;
+      
+      // Prepare customer features
+      const customerFeatures = prepareCustomerFeatures(rawData);
+      
+      // Normalize features
+      const normalized = normalizeFeatures(customerFeatures.features);
+      
+      // Perform clustering
+      const kmeans = new KMeansClustering(parseInt(clusters), 100);
+      kmeans.fit(normalized);
+      
+      // Assign cluster labels to customers
+      const segmentedCustomers = customerFeatures.customers.map((customer, idx) => ({
+        ...customer,
+        segment: kmeans.labels[idx],
+        segmentName: getSegmentName(kmeans.labels[idx], kmeans.centroids[kmeans.labels[idx]])
+      }));
+      
+      // Calculate segment statistics
+      const segmentStats = calculateSegmentStats(segmentedCustomers, kmeans);
+      
+      res.json({
+        customers: segmentedCustomers,
+        segments: segmentStats,
+        clusterCenters: kmeans.centroids,
+        totalClusters: clusters
+      });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  }
+);
+
+// Anomaly detection endpoint
+router.post("/detect-anomalies",
+  upload.single("file"),
+  validateCSVUpload,
+  async (req, res) => {
+    try {
+      const data = await processCSV(req.file.path);
+      const { method = 'zscore', threshold = 3 } = req.body;
+      
+      // Extract revenue time series
+      const timeSeries = extractTimeSeries(data.charts);
+      
+      // Detect anomalies
+      const detector = new AnomalyDetector(method, parseFloat(threshold));
+      detector.fit(timeSeries);
+      
+      const anomalies = detector.detectBatch(timeSeries);
+      
+      // Find anomalous points
+      const anomalousPoints = anomalies
+        .map((result, idx) => ({
+          index: idx,
+          value: timeSeries[idx],
+          ...result
+        }))
+        .filter(point => point.isAnomaly);
+      
+      res.json({
+        timeSeries,
+        anomalies: anomalousPoints,
+        totalAnomalies: anomalousPoints.length,
+        anomalyRate: (anomalousPoints.length / timeSeries.length) * 100,
+        detectorStats: {
+          mean: detector.mean,
+          stdDev: detector.stdDev,
+          q1: detector.q1,
+          q3: detector.q3,
+          iqr: detector.iqr
+        }
+      });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  }
+);
+
+// Complex data aggregation endpoint
+router.post("/aggregate",
+  upload.single("file"),
+  validateCSVUpload,
+  async (req, res) => {
+    try {
+      const rawData = await processCSV(req.file.path);
+      const { pipeline } = req.body;
+      
+      const aggregator = new DataAggregator();
+      aggregator.load(rawData.rawRows || []);
+      
+      const results = aggregator.aggregate(JSON.parse(pipeline));
+      
+      res.json({
+        results,
+        rowCount: results.length,
+        pipelineStages: JSON.parse(pipeline).length
+      });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  }
+);
+
+// Cohort analysis endpoint
+router.post("/cohort-analysis",
+  upload.single("file"),
+  validateCSVUpload,
+  async (req, res) => {
+    try {
+      const data = await processCSV(req.file.path);
+      const { cohortType = 'monthly', metric = 'revenue' } = req.body;
+      
+      const cohortData = performCohortAnalysis(data, cohortType, metric);
+      
+      res.json({
+        cohorts: cohortData.cohorts,
+        retentionMatrix: cohortData.retentionMatrix,
+        cohortSizes: cohortData.cohortSizes,
+        averageRetention: cohortData.averageRetention
+      });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  }
+);
+
+// RFM (Recency, Frequency, Monetary) analysis endpoint
+router.post("/rfm-analysis",
+  upload.single("file"),
+  validateCSVUpload,
+  async (req, res) => {
+    try {
+      const data = await processCSV(req.file.path);
+      
+      const rfmScores = calculateRFMScores(data);
+      const customerSegments = segmentByRFM(rfmScores);
+      
+      res.json({
+        customers: rfmScores,
+        segments: customerSegments,
+        distribution: getRFMDistribution(rfmScores)
+      });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  }
+);
+
+// Market basket analysis endpoint
+router.post("/basket-analysis",
+  upload.single("file"),
+  validateCSVUpload,
+  async (req, res) => {
+    try {
+      const data = await processCSV(req.file.path);
+      const { minSupport = 0.01, minConfidence = 0.5 } = req.body;
+      
+      const transactions = extractTransactions(data);
+      const frequentItemsets = findFrequentItemsets(transactions, parseFloat(minSupport));
+      const associationRules = generateAssociationRules(frequentItemsets, parseFloat(minConfidence));
+      
+      res.json({
+        frequentItemsets,
+        associationRules: associationRules.slice(0, 50), // Top 50 rules
+        totalTransactions: transactions.length,
+        uniqueItems: new Set(transactions.flat()).size
+      });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  }
+);
+
+// Helper functions
+function extractTimeSeries(charts) {
+  const entries = Object.entries(charts);
+  return entries.map(([_, value]) => parseFloat(value) || 0);
+}
+
+function calculateConfidenceIntervals(historical, forecast) {
+  const historicalStd = calculateStdDev(historical);
+  return forecast.map(value => ({
+    lower: value - 1.96 * historicalStd,
+    upper: value + 1.96 * historicalStd
+  }));
+}
+
+function calculateStdDev(values) {
+  const mean = values.reduce((a, b) => a + b, 0) / values.length;
+  const variance = values.reduce((sum, x) => sum + Math.pow(x - mean, 2), 0) / values.length;
+  return Math.sqrt(variance);
+}
+
+function calculateForecastMetrics(timeSeries) {
+  const mean = timeSeries.reduce((a, b) => a + b, 0) / timeSeries.length;
+  const trend = (timeSeries[timeSeries.length - 1] - timeSeries[0]) / timeSeries.length;
+  
+  return {
+    mean,
+    trend,
+    volatility: calculateStdDev(timeSeries) / mean,
+    growth: ((timeSeries[timeSeries.length - 1] - timeSeries[0]) / timeSeries[0]) * 100
+  };
+}
+
+function prepareCustomerFeatures(data) {
+  // Mock implementation - would extract actual customer metrics
+  const customers = [];
+  const features = [];
+  
+  // Extract unique customers and their metrics
+  const customerMap = new Map();
+  
+  // This would process actual data
+  // For now, returning mock structure
+  
+  return { customers, features };
+}
+
+function normalizeFeatures(features) {
+  if (features.length === 0) return [];
+  
+  const normalized = [];
+  const numFeatures = features[0].length;
+  
+  for (let i = 0; i < numFeatures; i++) {
+    const column = features.map(row => row[i]);
+    const min = Math.min(...column);
+    const max = Math.max(...column);
+    const range = max - min || 1;
+    
+    features.forEach((row, idx) => {
+      if (!normalized[idx]) normalized[idx] = [];
+      normalized[idx][i] = (row[i] - min) / range;
+    });
+  }
+  
+  return normalized;
+}
+
+function getSegmentName(clusterId, centroid) {
+  const names = ['High Value', 'Medium Value', 'Low Value', 'At Risk', 'Champions'];
+  return names[clusterId % names.length];
+}
+
+function calculateSegmentStats(customers, kmeans) {
+  const stats = [];
+  
+  for (let i = 0; i < kmeans.k; i++) {
+    const segmentCustomers = customers.filter(c => c.segment === i);
+    stats.push({
+      segmentId: i,
+      size: segmentCustomers.length,
+      centroid: kmeans.centroids[i]
+    });
+  }
+  
+  return stats;
+}
+
+function performCohortAnalysis(data, cohortType, metric) {
+  // Mock cohort analysis implementation
+  return {
+    cohorts: [],
+    retentionMatrix: [],
+    cohortSizes: [],
+    averageRetention: 0
+  };
+}
+
+function calculateRFMScores(data) {
+  // Mock RFM calculation
+  return [];
+}
+
+function segmentByRFM(rfmScores) {
+  return {};
+}
+
+function getRFMDistribution(rfmScores) {
+  return {};
+}
+
+function extractTransactions(data) {
+  return [];
+}
+
+function findFrequentItemsets(transactions, minSupport) {
+  return [];
+}
+
+function generateAssociationRules(itemsets, minConfidence) {
+  return [];
+}
+
+module.exports = router;

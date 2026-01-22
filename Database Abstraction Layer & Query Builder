@@ -1,0 +1,453 @@
+// backend/database/queryBuilder.js
+class QueryBuilder {
+  constructor(table) {
+    this.table = table;
+    this.selectFields = ['*'];
+    this.whereConditions = [];
+    this.joinClauses = [];
+    this.orderByFields = [];
+    this.groupByFields = [];
+    this.havingConditions = [];
+    this.limitValue = null;
+    this.offsetValue = null;
+    this.bindings = [];
+  }
+
+  select(...fields) {
+    this.selectFields = fields.length > 0 ? fields : ['*'];
+    return this;
+  }
+
+  where(field, operator, value) {
+    if (arguments.length === 2) {
+      value = operator;
+      operator = '=';
+    }
+    
+    this.whereConditions.push({ field, operator, value, type: 'AND' });
+    this.bindings.push(value);
+    return this;
+  }
+
+  orWhere(field, operator, value) {
+    if (arguments.length === 2) {
+      value = operator;
+      operator = '=';
+    }
+    
+    this.whereConditions.push({ field, operator, value, type: 'OR' });
+    this.bindings.push(value);
+    return this;
+  }
+
+  whereIn(field, values) {
+    this.whereConditions.push({ 
+      field, 
+      operator: 'IN', 
+      value: values, 
+      type: 'AND' 
+    });
+    values.forEach(v => this.bindings.push(v));
+    return this;
+  }
+
+  whereBetween(field, min, max) {
+    this.whereConditions.push({ 
+      field, 
+      operator: 'BETWEEN', 
+      value: [min, max], 
+      type: 'AND' 
+    });
+    this.bindings.push(min, max);
+    return this;
+  }
+
+  whereNull(field) {
+    this.whereConditions.push({ 
+      field, 
+      operator: 'IS NULL', 
+      value: null, 
+      type: 'AND' 
+    });
+    return this;
+  }
+
+  whereNotNull(field) {
+    this.whereConditions.push({ 
+      field, 
+      operator: 'IS NOT NULL', 
+      value: null, 
+      type: 'AND' 
+    });
+    return this;
+  }
+
+  join(table, leftField, operator, rightField) {
+    this.joinClauses.push({ 
+      type: 'INNER', 
+      table, 
+      leftField, 
+      operator, 
+      rightField 
+    });
+    return this;
+  }
+
+  leftJoin(table, leftField, operator, rightField) {
+    this.joinClauses.push({ 
+      type: 'LEFT', 
+      table, 
+      leftField, 
+      operator, 
+      rightField 
+    });
+    return this;
+  }
+
+  rightJoin(table, leftField, operator, rightField) {
+    this.joinClauses.push({ 
+      type: 'RIGHT', 
+      table, 
+      leftField, 
+      operator, 
+      rightField 
+    });
+    return this;
+  }
+
+  orderBy(field, direction = 'ASC') {
+    this.orderByFields.push({ field, direction: direction.toUpperCase() });
+    return this;
+  }
+
+  groupBy(...fields) {
+    this.groupByFields.push(...fields);
+    return this;
+  }
+
+  having(field, operator, value) {
+    this.havingConditions.push({ field, operator, value });
+    this.bindings.push(value);
+    return this;
+  }
+
+  limit(value) {
+    this.limitValue = value;
+    return this;
+  }
+
+  offset(value) {
+    this.offsetValue = value;
+    return this;
+  }
+
+  toSQL() {
+    let sql = `SELECT ${this.selectFields.join(', ')} FROM ${this.table}`;
+    
+    // Add JOINs
+    if (this.joinClauses.length > 0) {
+      this.joinClauses.forEach(join => {
+        sql += ` ${join.type} JOIN ${join.table} ON ${join.leftField} ${join.operator} ${join.rightField}`;
+      });
+    }
+    
+    // Add WHERE
+    if (this.whereConditions.length > 0) {
+      sql += ' WHERE ';
+      this.whereConditions.forEach((condition, idx) => {
+        if (idx > 0) {
+          sql += ` ${condition.type} `;
+        }
+        
+        if (condition.operator === 'IN') {
+          const placeholders = condition.value.map(() => '?').join(', ');
+          sql += `${condition.field} IN (${placeholders})`;
+        } else if (condition.operator === 'BETWEEN') {
+          sql += `${condition.field} BETWEEN ? AND ?`;
+        } else if (condition.operator === 'IS NULL' || condition.operator === 'IS NOT NULL') {
+          sql += `${condition.field} ${condition.operator}`;
+        } else {
+          sql += `${condition.field} ${condition.operator} ?`;
+        }
+      });
+    }
+    
+    // Add GROUP BY
+    if (this.groupByFields.length > 0) {
+      sql += ` GROUP BY ${this.groupByFields.join(', ')}`;
+    }
+    
+    // Add HAVING
+    if (this.havingConditions.length > 0) {
+      sql += ' HAVING ';
+      this.havingConditions.forEach((condition, idx) => {
+        if (idx > 0) sql += ' AND ';
+        sql += `${condition.field} ${condition.operator} ?`;
+      });
+    }
+    
+    // Add ORDER BY
+    if (this.orderByFields.length > 0) {
+      sql += ' ORDER BY ';
+      sql += this.orderByFields.map(f => `${f.field} ${f.direction}`).join(', ');
+    }
+    
+    // Add LIMIT and OFFSET
+    if (this.limitValue !== null) {
+      sql += ` LIMIT ${this.limitValue}`;
+    }
+    
+    if (this.offsetValue !== null) {
+      sql += ` OFFSET ${this.offsetValue}`;
+    }
+    
+    return { sql, bindings: this.bindings };
+  }
+
+  async execute() {
+    const { sql, bindings } = this.toSQL();
+    // This would execute against actual database
+    return { sql, bindings };
+  }
+}
+
+// Database connection pool manager
+class ConnectionPool {
+  constructor(config) {
+    this.config = config;
+    this.pool = [];
+    this.activeConnections = 0;
+    this.maxConnections = config.max || 10;
+    this.minConnections = config.min || 2;
+    this.idleTimeout = config.idleTimeout || 30000;
+    this.waitQueue = [];
+  }
+
+  async acquire() {
+    if (this.pool.length > 0) {
+      const connection = this.pool.pop();
+      this.activeConnections++;
+      return connection;
+    }
+    
+    if (this.activeConnections < this.maxConnections) {
+      const connection = await this.createConnection();
+      this.activeConnections++;
+      return connection;
+    }
+    
+    // Wait for available connection
+    return new Promise((resolve) => {
+      this.waitQueue.push(resolve);
+    });
+  }
+
+  release(connection) {
+    this.activeConnections--;
+    
+    if (this.waitQueue.length > 0) {
+      const resolve = this.waitQueue.shift();
+      this.activeConnections++;
+      resolve(connection);
+    } else {
+      connection.lastUsed = Date.now();
+      this.pool.push(connection);
+    }
+  }
+
+  async createConnection() {
+    // Mock connection creation
+    return {
+      id: Math.random().toString(36).substr(2, 9),
+      lastUsed: Date.now(),
+      query: async (sql, params) => {
+        // Mock query execution
+        return { rows: [], rowCount: 0 };
+      }
+    };
+  }
+
+  async cleanup() {
+    const now = Date.now();
+    const toRemove = [];
+    
+    for (let i = 0; i < this.pool.length; i++) {
+      const conn = this.pool[i];
+      if (now - conn.lastUsed > this.idleTimeout && 
+          this.pool.length - toRemove.length > this.minConnections) {
+        toRemove.push(i);
+      }
+    }
+    
+    toRemove.reverse().forEach(idx => {
+      this.pool.splice(idx, 1);
+    });
+  }
+
+  async close() {
+    this.pool = [];
+    this.activeConnections = 0;
+    this.waitQueue = [];
+  }
+}
+
+// Transaction manager
+class TransactionManager {
+  constructor(pool) {
+    this.pool = pool;
+  }
+
+  async transaction(callback) {
+    const connection = await this.pool.acquire();
+    
+    try {
+      await connection.query('BEGIN');
+      const result = await callback(connection);
+      await connection.query('COMMIT');
+      return result;
+    } catch (error) {
+      await connection.query('ROLLBACK');
+      throw error;
+    } finally {
+      this.pool.release(connection);
+    }
+  }
+
+  async withSavepoint(connection, name, callback) {
+    try {
+      await connection.query(`SAVEPOINT ${name}`);
+      const result = await callback();
+      await connection.query(`RELEASE SAVEPOINT ${name}`);
+      return result;
+    } catch (error) {
+      await connection.query(`ROLLBACK TO SAVEPOINT ${name}`);
+      throw error;
+    }
+  }
+}
+
+// ORM-like model base class
+class Model {
+  constructor(tableName) {
+    this.tableName = tableName;
+    this.attributes = {};
+    this.relations = new Map();
+  }
+
+  static query() {
+    return new QueryBuilder(this.tableName);
+  }
+
+  static async find(id) {
+    const result = await new QueryBuilder(this.tableName)
+      .where('id', id)
+      .limit(1)
+      .execute();
+    
+    return result.rows[0] || null;
+  }
+
+  static async findMany(ids) {
+    return await new QueryBuilder(this.tableName)
+      .whereIn('id', ids)
+      .execute();
+  }
+
+  static async create(attributes) {
+    const instance = new this();
+    instance.attributes = attributes;
+    await instance.save();
+    return instance;
+  }
+
+  async save() {
+    if (this.attributes.id) {
+      return this.update();
+    } else {
+      return this.insert();
+    }
+  }
+
+  async insert() {
+    const fields = Object.keys(this.attributes);
+    const values = Object.values(this.attributes);
+    const placeholders = fields.map(() => '?').join(', ');
+    
+    const sql = `INSERT INTO ${this.tableName} (${fields.join(', ')}) VALUES (${placeholders})`;
+    
+    // Execute and get inserted ID
+    return { sql, values };
+  }
+
+  async update() {
+    const fields = Object.keys(this.attributes).filter(k => k !== 'id');
+    const setClause = fields.map(f => `${f} = ?`).join(', ');
+    const values = fields.map(f => this.attributes[f]);
+    values.push(this.attributes.id);
+    
+    const sql = `UPDATE ${this.tableName} SET ${setClause} WHERE id = ?`;
+    
+    return { sql, values };
+  }
+
+  async delete() {
+    const sql = `DELETE FROM ${this.tableName} WHERE id = ?`;
+    return { sql, values: [this.attributes.id] };
+  }
+
+  hasOne(relatedModel, foreignKey) {
+    this.relations.set(relatedModel.tableName, {
+      type: 'hasOne',
+      model: relatedModel,
+      foreignKey
+    });
+  }
+
+  hasMany(relatedModel, foreignKey) {
+    this.relations.set(relatedModel.tableName, {
+      type: 'hasMany',
+      model: relatedModel,
+      foreignKey
+    });
+  }
+
+  belongsTo(relatedModel, foreignKey) {
+    this.relations.set(relatedModel.tableName, {
+      type: 'belongsTo',
+      model: relatedModel,
+      foreignKey
+    });
+  }
+
+  async load(relationName) {
+    const relation = this.relations.get(relationName);
+    if (!relation) {
+      throw new Error(`Relation ${relationName} not found`);
+    }
+    
+    const query = new QueryBuilder(relation.model.tableName);
+    
+    if (relation.type === 'hasOne' || relation.type === 'hasMany') {
+      query.where(relation.foreignKey, this.attributes.id);
+    } else if (relation.type === 'belongsTo') {
+      query.where('id', this.attributes[relation.foreignKey]);
+    }
+    
+    const result = await query.execute();
+    
+    if (relation.type === 'hasOne' || relation.type === 'belongsTo') {
+      this.attributes[relationName] = result.rows[0] || null;
+    } else {
+      this.attributes[relationName] = result.rows;
+    }
+    
+    return this;
+  }
+}
+
+module.exports = {
+  QueryBuilder,
+  ConnectionPool,
+  TransactionManager,
+  Model
+};

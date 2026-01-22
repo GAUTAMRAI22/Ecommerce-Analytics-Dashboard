@@ -1,0 +1,178 @@
+// backend/middleware/rateLimiter.js
+const rateLimit = new Map();
+const WINDOW_MS = 60000;
+const MAX_REQUESTS = 100;
+
+class TokenBucket {
+  constructor(capacity, refillRate) {
+    this.capacity = capacity;
+    this.tokens = capacity;
+    this.refillRate = refillRate;
+    this.lastRefill = Date.now();
+  }
+
+  consume(tokens = 1) {
+    this.refill();
+    if (this.tokens >= tokens) {
+      this.tokens -= tokens;
+      return true;
+    }
+    return false;
+  }
+
+  refill() {
+    const now = Date.now();
+    const elapsed = now - this.lastRefill;
+    const tokensToAdd = (elapsed / 1000) * this.refillRate;
+    this.tokens = Math.min(this.capacity, this.tokens + tokensToAdd);
+    this.lastRefill = now;
+  }
+}
+
+const buckets = new Map();
+
+module.exports = (req, res, next) => {
+  const identifier = req.ip || req.connection.remoteAddress;
+  const now = Date.now();
+  
+  if (!buckets.has(identifier)) {
+    buckets.set(identifier, new TokenBucket(100, 2));
+  }
+  
+  const bucket = buckets.get(identifier);
+  
+  if (bucket.consume(1)) {
+    res.setHeader('X-RateLimit-Remaining', Math.floor(bucket.tokens));
+    next();
+  } else {
+    res.status(429).json({
+      error: 'Rate limit exceeded',
+      retryAfter: Math.ceil((1 - bucket.tokens) / bucket.refillRate)
+    });
+  }
+};
+
+// backend/middleware/cacheManager.js
+class LRUCache {
+  constructor(capacity) {
+    this.capacity = capacity;
+    this.cache = new Map();
+    this.accessOrder = [];
+  }
+
+  get(key) {
+    if (!this.cache.has(key)) return null;
+    
+    this.accessOrder = this.accessOrder.filter(k => k !== key);
+    this.accessOrder.push(key);
+    
+    const entry = this.cache.get(key);
+    if (Date.now() - entry.timestamp > entry.ttl) {
+      this.cache.delete(key);
+      return null;
+    }
+    
+    return entry.value;
+  }
+
+  set(key, value, ttl = 300000) {
+    if (this.cache.size >= this.capacity && !this.cache.has(key)) {
+      const lru = this.accessOrder.shift();
+      this.cache.delete(lru);
+    }
+    
+    this.cache.set(key, {
+      value,
+      timestamp: Date.now(),
+      ttl
+    });
+    
+    this.accessOrder = this.accessOrder.filter(k => k !== key);
+    this.accessOrder.push(key);
+  }
+
+  invalidate(pattern) {
+    const keysToDelete = [];
+    for (const key of this.cache.keys()) {
+      if (key.includes(pattern)) {
+        keysToDelete.push(key);
+      }
+    }
+    keysToDelete.forEach(k => {
+      this.cache.delete(k);
+      this.accessOrder = this.accessOrder.filter(ak => ak !== k);
+    });
+  }
+
+  clear() {
+    this.cache.clear();
+    this.accessOrder = [];
+  }
+}
+
+const cache = new LRUCache(1000);
+
+module.exports = {
+  cache,
+  cacheMiddleware: (keyGenerator, ttl = 300000) => {
+    return (req, res, next) => {
+      const key = keyGenerator(req);
+      const cached = cache.get(key);
+      
+      if (cached) {
+        res.setHeader('X-Cache', 'HIT');
+        return res.json(cached);
+      }
+      
+      res.setHeader('X-Cache', 'MISS');
+      
+      const originalJson = res.json.bind(res);
+      res.json = (data) => {
+        cache.set(key, data, ttl);
+        originalJson(data);
+      };
+      
+      next();
+    };
+  }
+};
+
+// backend/middleware/requestValidator.js
+const validators = {
+  validateCSVUpload: (req, res, next) => {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No file uploaded' });
+    }
+    
+    const allowedMimes = ['text/csv', 'application/vnd.ms-excel'];
+    if (!allowedMimes.includes(req.file.mimetype)) {
+      return res.status(400).json({ error: 'Invalid file type' });
+    }
+    
+    if (req.file.size > 50 * 1024 * 1024) {
+      return res.status(400).json({ error: 'File too large' });
+    }
+    
+    next();
+  },
+  
+  validateDateRange: (req, res, next) => {
+    const { startDate, endDate } = req.query;
+    
+    if (startDate && isNaN(Date.parse(startDate))) {
+      return res.status(400).json({ error: 'Invalid start date' });
+    }
+    
+    if (endDate && isNaN(Date.parse(endDate))) {
+      return res.status(400).json({ error: 'Invalid end date' });
+    }
+    
+    if (startDate && endDate && new Date(startDate) > new Date(endDate)) {
+      return res.status(400).json({ error: 'Start date must be before end date' });
+    }
+    
+    next();
+  }
+};
+
+module.exports = validators;
